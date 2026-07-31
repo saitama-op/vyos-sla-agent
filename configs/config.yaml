@@ -1,4 +1,4 @@
-interval: 5s
+interval: 2s
 
 wans:
   # ---------------------------------
@@ -10,15 +10,19 @@ wans:
       - 1.1.1.1
       - 8.8.8.8
       - 9.9.9.9
+    tcp_targets:
+      - "1.1.1.1:443"
+      - "8.8.8.8:443"
+      - "9.9.9.9:443"
     on_down: []
     on_up: []
     threshold:
-      latency: 120
-      latency_samples: 20
-      loss: 2
-      loss_samples: 20
-      jitter: 15
-      jitter_samples: 20
+      latency: 250
+      latency_samples: 40
+      loss: 5
+      loss_samples: 40
+      jitter: 50
+      jitter_samples: 40
 
   # ---------------------------------
   # WAN 2: Hathway
@@ -29,15 +33,19 @@ wans:
       - 1.1.1.1
       - 8.8.8.8
       - 9.9.9.9
+    tcp_targets:
+      - "1.1.1.1:443"
+      - "8.8.8.8:443"
+      - "9.9.9.9:443"
     on_down: []
     on_up: []
     threshold:
-      latency: 120
-      latency_samples: 20
-      loss: 2
-      loss_samples: 20
-      jitter: 10
-      jitter_samples: 20
+      latency: 250
+      latency_samples: 40
+      loss: 5
+      loss_samples: 40
+      jitter: 50
+      jitter_samples: 40
 
   # ---------------------------------
   # WAN 3: Airtel
@@ -48,12 +56,16 @@ wans:
       - 1.1.1.1
       - 8.8.8.8
       - 9.9.9.9
+    tcp_targets:
+      - "1.1.1.1:443"
+      - "8.8.8.8:443"
+      - "9.9.9.9:443"
     on_down: []
     on_up: []
     threshold:
-      latency: 120
-      latency_samples: 20
-      loss: 2
-      loss_samples: 20
-      jitter: 20
-      jitter_samples: 20
+      latency: 250
+      latency_samples: 40
+      loss: 5
+      loss_samples: 40
+      jitter: 50
+      jitter_samples: 40

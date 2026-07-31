@@ -18,39 +18,47 @@ type Worker struct {
 	wan           config.WAN
 	engine        *decision.Engine
 	vyosCtrl      *vyos.Controller
+	
+	// ICMP Buffers
 	latencyBuf    *util.FloatRingBuffer
 	lossBuf       *util.FloatRingBuffer
 	jitterBuf     *util.FloatRingBuffer
 	jitterCalc    *metrics.RFC3550Jitter
+	
+	// TCP Buffers
+	tcpLatencyBuf *util.FloatRingBuffer
+	tcpLossBuf    *util.FloatRingBuffer
 }
 
 // NewWorker initializes a concurrent probe worker for a specific WAN interface
 func NewWorker(wan config.WAN, engine *decision.Engine, vyosCtrl *vyos.Controller) *Worker {
-	
+
 	// Enforce safe defaults if they are missing from config.yaml
 	latencySamples := wan.Threshold.LatencySamples
 	if latencySamples <= 0 {
 		latencySamples = 20
 	}
-	
+
 	lossSamples := wan.Threshold.LossSamples
 	if lossSamples <= 0 {
 		lossSamples = 20
 	}
-	
+
 	jitterSamples := wan.Threshold.JitterSamples
 	if jitterSamples <= 0 {
 		jitterSamples = 20
 	}
 
 	return &Worker{
-		wan:        wan,
-		engine:     engine,
-		vyosCtrl:   vyosCtrl,
-		latencyBuf: util.NewFloatRingBuffer(latencySamples),
-		lossBuf:    util.NewFloatRingBuffer(lossSamples),
-		jitterBuf:  util.NewFloatRingBuffer(jitterSamples),
-		jitterCalc: metrics.NewRFC3550Jitter(),
+		wan:           wan,
+		engine:        engine,
+		vyosCtrl:      vyosCtrl,
+		latencyBuf:    util.NewFloatRingBuffer(latencySamples),
+		lossBuf:       util.NewFloatRingBuffer(lossSamples),
+		jitterBuf:     util.NewFloatRingBuffer(jitterSamples),
+		jitterCalc:    metrics.NewRFC3550Jitter(),
+		tcpLatencyBuf: util.NewFloatRingBuffer(latencySamples),
+		tcpLossBuf:    util.NewFloatRingBuffer(lossSamples),
 	}
 }
 
@@ -67,7 +75,7 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) {
 
 	seq := 0
 
-	slog.Info("Started WAN worker", "wan", w.wan.Name, "targets", len(w.wan.Targets))
+	slog.Info("Started WAN worker", "wan", w.wan.Name, "icmp_targets", len(w.wan.Targets), "tcp_targets", len(w.wan.TCPTargets))
 
 	for {
 		select {
@@ -82,67 +90,137 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) {
 }
 
 func (w *Worker) executeProbeCycle(seq int) {
-	targetCount := len(w.wan.Targets)
-	results := make(chan probeResult, targetCount)
+	// ==========================================
+	// 1. ICMP PROBING (Fan-out)
+	// ==========================================
+	icmpTargetCount := len(w.wan.Targets)
+	icmpResults := make(chan probeResult, icmpTargetCount)
 	var wg sync.WaitGroup
 
-	// 1. Fan-out: Launch goroutines for simultaneous probing
 	for _, target := range w.wan.Targets {
 		wg.Add(1)
 		go func(t string) {
 			defer wg.Done()
-			// We now pass the interface name so MeasureRTT can open its own dedicated socket
 			rtt, err := MeasureRTT(w.wan.Interface, t, seq)
-			results <- probeResult{target: t, rtt: rtt, err: err}
+			icmpResults <- probeResult{target: t, rtt: rtt, err: err}
 		}(target)
 	}
 
-	// 2. Wait for all probes in this cycle to complete (or hit the 2s timeout)
+	// ==========================================
+	// 2. TCP PROBING (Fan-out)
+	// ==========================================
+	tcpTargetCount := len(w.wan.TCPTargets)
+	tcpResults := make(chan probeResult, tcpTargetCount)
+
+	for _, target := range w.wan.TCPTargets {
+		wg.Add(1)
+		go func(t string) {
+			defer wg.Done()
+			rtt, err := SendTCPProbe(w.wan.Interface, t) // Calls the new tcp.go function
+			tcpResults <- probeResult{target: t, rtt: rtt, err: err}
+		}(target)
+	}
+
+	// Wait for ALL probes (ICMP and TCP) in this cycle to complete
 	wg.Wait()
-	close(results)
+	close(icmpResults)
+	close(tcpResults)
 
-	// 3. Fan-in: Aggregate cycle results
-	var totalLatency time.Duration
-	failedProbes := 0
+	// ==========================================
+	// 3. AGGREGATE ICMP RESULTS (Fan-in)
+	// ==========================================
+	var totalICMPLatency time.Duration
+	failedICMPProbes := 0
 
-	for res := range results {
+	for res := range icmpResults {
 		if res.err != nil {
-			failedProbes++
+			failedICMPProbes++
 			continue
 		}
-		totalLatency += res.rtt
+		totalICMPLatency += res.rtt
 	}
 
-	successfulProbes := targetCount - failedProbes
-	cycleLossPercent := (float64(failedProbes) / float64(targetCount)) * 100.0
+	successfulICMPProbes := icmpTargetCount - failedICMPProbes
+	cycleLossPercent := (float64(failedICMPProbes) / float64(icmpTargetCount)) * 100.0
 	var cycleLatencyMs float64
 
-	if successfulProbes > 0 {
-		// Divide by time.Millisecond as a float to preserve sub-millisecond fractions
-		cycleLatencyMs = (float64(totalLatency) / float64(time.Millisecond)) / float64(successfulProbes)
+	if successfulICMPProbes > 0 {
+		cycleLatencyMs = (float64(totalICMPLatency) / float64(time.Millisecond)) / float64(successfulICMPProbes)
 	} else {
-		// If 100% loss, cap latency to threshold + penalty to ensure it penalizes the average
-		cycleLatencyMs = w.wan.Threshold.Latency * 1.5 
+		cycleLatencyMs = w.wan.Threshold.Latency * 1.5 // Penalty cap
 	}
 
-	// Calculate Jitter
 	cycleJitter := w.jitterCalc.AddSample(cycleLatencyMs)
 
-	// 4. Update Ring Buffers
+	// ==========================================
+	// 4. AGGREGATE TCP RESULTS (Fan-in)
+	// ==========================================
+	var totalTCPLatency time.Duration
+	failedTCPProbes := 0
+	var tcpCycleLossPercent float64
+	var tcpCycleLatencyMs float64
+
+	if tcpTargetCount > 0 {
+		for res := range tcpResults {
+			if res.err != nil {
+				failedTCPProbes++
+				continue
+			}
+			totalTCPLatency += res.rtt
+		}
+
+		successfulTCPProbes := tcpTargetCount - failedTCPProbes
+		tcpCycleLossPercent = (float64(failedTCPProbes) / float64(tcpTargetCount)) * 100.0
+
+		if successfulTCPProbes > 0 {
+			tcpCycleLatencyMs = (float64(totalTCPLatency) / float64(time.Millisecond)) / float64(successfulTCPProbes)
+		} else {
+			tcpCycleLatencyMs = w.wan.Threshold.Latency * 1.5 // Penalty cap
+		}
+	}
+
+	// ==========================================
+	// 5. UPDATE RING BUFFERS
+	// ==========================================
 	w.latencyBuf.Add(cycleLatencyMs)
 	w.lossBuf.Add(cycleLossPercent)
 	w.jitterBuf.Add(cycleJitter)
+	
+	if tcpTargetCount > 0 {
+		w.tcpLatencyBuf.Add(tcpCycleLatencyMs)
+		w.tcpLossBuf.Add(tcpCycleLossPercent)
+	}
 
-	// 5. Calculate rolling metrics for decision engine
+	// ==========================================
+	// 6. CALCULATE ROLLING METRICS
+	// ==========================================
 	rollingLatency := metrics.Percentile95(w.latencyBuf.Values())
 	rollingLoss := metrics.Average(w.lossBuf.Values())
 	rollingJitter := metrics.Average(w.jitterBuf.Values())
+	
+	rollingTCPLatency := 0.0
+	rollingTCPLoss := 0.0
+	if tcpTargetCount > 0 {
+		rollingTCPLatency = metrics.Percentile95(w.tcpLatencyBuf.Values())
+		rollingTCPLoss = metrics.Average(w.tcpLossBuf.Values())
+	}
 
-	// 6. Evaluate state machine
+	// ==========================================
+	// 7. EVALUATE STATE MACHINE
+	// ==========================================
 	previousState := w.engine.CurrentState
-	currentState := w.engine.Evaluate(rollingLatency, rollingLoss, rollingJitter, w.wan.Threshold.Latency, w.wan.Threshold.Loss, w.wan.Threshold.Jitter)
+	
+	// NOTE: You will need to update your engine.Evaluate() signature in internal/decision/engine.go
+	// to accept rollingTCPLatency and rollingTCPLoss as shown here.
+	currentState := w.engine.Evaluate(
+		rollingLatency, rollingLoss, rollingJitter, 
+		rollingTCPLatency, rollingTCPLoss, 
+		w.wan.Threshold.Latency, w.wan.Threshold.Loss, w.wan.Threshold.Jitter,
+	)
 
-	// 7. Execute Active SD-WAN Mitigation (VyOS Controller)
+	// ==========================================
+	// 8. EXECUTE ACTIVE SD-WAN MITIGATION
+	// ==========================================
 	if w.vyosCtrl != nil {
 		if currentState == decision.StateDown && previousState != decision.StateDown {
 			slog.Warn("SLA Failure threshold reached. Executing on_down commands.", "wan", w.wan.Name)
@@ -161,10 +239,15 @@ func (w *Worker) executeProbeCycle(seq int) {
 		}
 	}
 
-	// 8. Export to Prometheus
+	// ==========================================
+	// 9. EXPORT TO PROMETHEUS
+	// ==========================================
 	exporter.LatencyGauge.WithLabelValues(w.wan.Name).Set(rollingLatency)
 	exporter.LossGauge.WithLabelValues(w.wan.Name).Set(rollingLoss)
-	
+	exporter.JitterGauge.WithLabelValues(w.wan.Name).Set(rollingJitter)
+	exporter.TCPLatencyGauge.WithLabelValues(w.wan.Name).Set(rollingTCPLatency)
+	exporter.TCPLossGauge.WithLabelValues(w.wan.Name).Set(rollingTCPLoss)
+
 	stateVal := 0.0
 	if currentState == decision.StateDegraded {
 		stateVal = 1.0
@@ -173,11 +256,13 @@ func (w *Worker) executeProbeCycle(seq int) {
 	}
 	exporter.StateGauge.WithLabelValues(w.wan.Name).Set(stateVal)
 
-	slog.Debug("Cycle complete", 
-		"wan", w.wan.Name, 
-		"r_latency", rollingLatency, 
-		"r_loss", rollingLoss, 
+	slog.Debug("Cycle complete",
+		"wan", w.wan.Name,
+		"r_latency", rollingLatency,
+		"r_loss", rollingLoss,
 		"r_jitter", rollingJitter,
+		"r_tcp_lat", rollingTCPLatency,
+		"r_tcp_loss", rollingTCPLoss,
 		"state", currentState,
 	)
 }

@@ -20,6 +20,7 @@ type WAN struct {
 	Name      string    `yaml:"name"`
 	Interface string    `yaml:"interface"`
 	Targets   []string  `yaml:"targets"`
+	TCPTargets []string        `yaml:"tcp_targets"`
 	Threshold Threshold `yaml:"threshold"`
 	OnDown    []string  `yaml:"on_down"` // Commands to execute when SLA fails
 	OnUp      []string  `yaml:"on_up"` // Commands to execute when SLA recovers
