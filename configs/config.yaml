@@ -1,0 +1,27 @@
+interval: 5s
+wans:
+  - name: ACT
+    interface: eth0
+    targets:
+      - 1.1.1.1
+      - 8.8.8.8
+    threshold:
+      latency: 120        # Max latency in ms
+      latency_samples: 20 # Rolling window size
+      loss: 2             # Max packet loss %
+      loss_samples: 20
+      jitter: 15          # Max RFC3550 jitter in ms
+      jitter_samples: 20
+
+  - name: Hathway
+    interface: eth2
+    targets:
+      - 1.1.1.1
+      - 9.9.9.9
+    threshold:
+      latency: 80
+      latency_samples: 20
+      loss: 1
+      loss_samples: 20
+      jitter: 10
+      jitter_samples: 20
