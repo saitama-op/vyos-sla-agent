@@ -18,6 +18,18 @@ A high-performance, ultra-lightweight SD-WAN SLA monitoring and failover agent f
 ## Architecture
 The agent runs an evaluation cycle every `X` seconds (defined in the config). For each WAN, it concurrently pings all targets, calculates rolling metrics over a defined sample size, and evaluates the results against the configured thresholds. If a threshold is breached, the agent safely wraps VyOS `begin`, `set...`, `commit`, and `end` commands in a lock-guarded transaction.
 
+## Active SD-WAN Failover (VyOS CLI Integration)
+
+The agent natively integrates with the VyOS configuration shell (`/opt/vyatta/sbin/vyatta-cfg-cmd-wrapper`). Instead of hardcoding failover logic, you can define an array of exact VyOS commands to run when an SLA is breached (`on_down`) and when it recovers (`on_up`). 
+
+The agent automatically wraps these commands in a safe `begin`, `commit`, `end` transaction. If a command fails to apply, the agent will issue a `discard` to prevent configuration database corruption.
+
+```yaml
+    on_down:
+      - "set protocols static route 0.0.0.0/0 next-hop 10.0.0.1 disable"
+    on_up:
+      - "delete protocols static route 0.0.0.0/0 next-hop 10.0.0.1 disable"
+
 ## Installation & Build
 
 Build the static binary for VyOS (Linux AMD64) using the provided Makefile. The build process uses `CGO_ENABLED=0` and strips debugging symbols to keep the binary small.

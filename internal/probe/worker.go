@@ -141,14 +141,23 @@ func (w *Worker) executeProbeCycle(seq int) {
 	previousState := w.engine.CurrentState
 	currentState := w.engine.Evaluate(rollingLatency, rollingLoss, rollingJitter, w.wan.Threshold.Latency, w.wan.Threshold.Loss, w.wan.Threshold.Jitter)
 
+
 	// 7. Execute Active SD-WAN Mitigation (VyOS Controller)
 	if w.vyosCtrl != nil {
 		if currentState == decision.StateDown && previousState != decision.StateDown {
-			slog.Warn("SLA Failure threshold reached. Disabling WAN interface route.", "wan", w.wan.Name)
-			_ = w.vyosCtrl.DisableInterface(w.wan.Interface) // Example action
+			slog.Warn("SLA Failure threshold reached. Executing on_down commands.", "wan", w.wan.Name)
+			if len(w.wan.OnDown) > 0 {
+				if err := w.vyosCtrl.ExecuteTransaction(w.wan.OnDown); err != nil {
+					slog.Error("VyOS on_down transaction failed", "error", err, "wan", w.wan.Name)
+				}
+			}
 		} else if currentState == decision.StateUp && previousState != decision.StateUp {
-			slog.Info("SLA Recovered. Restoring WAN interface route.", "wan", w.wan.Name)
-			_ = w.vyosCtrl.EnableInterface(w.wan.Interface) // Example action
+			slog.Info("SLA Recovered. Executing on_up commands.", "wan", w.wan.Name)
+			if len(w.wan.OnUp) > 0 {
+				if err := w.vyosCtrl.ExecuteTransaction(w.wan.OnUp); err != nil {
+					slog.Error("VyOS on_up transaction failed", "error", err, "wan", w.wan.Name)
+				}
+			}
 		}
 	}
 
