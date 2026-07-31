@@ -29,6 +29,9 @@ jobs:
       - name: Build static binary using Makefile
         run: make
 
+      - name: Verify binary exists
+        run: ls -la sla-agent
+
       - name: Create GitHub Release and Upload Binary
         uses: softprops/action-gh-release@v2
         with:
