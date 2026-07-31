@@ -27,6 +27,7 @@ Build the static binary for VyOS (Linux AMD64) using the provided Makefile. The 
 git clone [https://github.com/saitama-op/vyos-sla-agent.git](https://github.com/saitama-op/vyos-sla-agent.git)
 cd vyos-sla-agent
 make
+```
 
 ## Active SD-WAN Failover (VyOS CLI Integration)
 
@@ -39,3 +40,4 @@ The agent automatically wraps these commands in a safe `begin`, `commit`, `end` 
       - "set protocols static route 0.0.0.0/0 next-hop 10.0.0.1 disable"
     on_up:
       - "delete protocols static route 0.0.0.0/0 next-hop 10.0.0.1 disable"
+```
