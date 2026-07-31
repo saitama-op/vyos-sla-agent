@@ -36,11 +36,19 @@ func CreateInterfaceBoundICMPConn(ifaceName string) (net.PacketConn, error) {
 	return pconn, nil
 }
 
-func MeasureRTT(conn net.PacketConn, targetIP string, seq int) (time.Duration, error) {
+func MeasureRTT(ifaceName string, targetIP string, seq int) (time.Duration, error) {
+	// 1. Open a dedicated socket for this specific probe to prevent goroutine packet stealing
+	conn, err := CreateInterfaceBoundICMPConn(ifaceName)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	pid := os.Getpid() & 0xffff
 	wm := icmp.Message{
 		Type: ipv4.ICMPTypeEcho, Code: 0,
 		Body: &icmp.Echo{
-			ID: os.Getpid() & 0xffff, Seq: seq,
+			ID: pid, Seq: seq,
 			Data: []byte("vyos-sla-agent"),
 		},
 	}
@@ -60,20 +68,35 @@ func MeasureRTT(conn net.PacketConn, targetIP string, seq int) (time.Duration, e
 	}
 
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	rb := make([]byte, 1500)
-	n, _, err := conn.ReadFrom(rb)
-	if err != nil {
-		return 0, err
-	}
-	
-	duration := time.Since(start)
 
-	rm, err := icmp.ParseMessage(ipv4.ICMPTypeEcho.Protocol(), rb[:n])
-	if err != nil {
-		return 0, err
+	// 2. Loop to discard background ICMP noise on the interface until we find our exact packet
+	for {
+		rb := make([]byte, 1500)
+		n, peer, err := conn.ReadFrom(rb)
+		if err != nil {
+			return 0, err // Timeout or read error
+		}
+
+		// Ignore replies that didn't come from our specific target IP
+		if peer.String() != dst.String() {
+			continue
+		}
+
+		rm, err := icmp.ParseMessage(ipv4.ICMPTypeEcho.Protocol(), rb[:n])
+		if err != nil {
+			continue
+		}
+
+		// Ignore non-Echo-Replies and verify the ID and Sequence match exactly
+		if rm.Type == ipv4.ICMPTypeEchoReply {
+			if echo, ok := rm.Body.(*icmp.Echo); ok {
+				if echo.ID == pid && echo.Seq == seq {
+					// This is our exact packet!
+					return time.Since(start), nil
+				}
+			}
+		}
 	}
-	if rm.Type == ipv4.ICMPTypeEchoReply {
-		return duration, nil
-	}
-	return 0, fmt.Errorf("invalid reply")
 }
+
+

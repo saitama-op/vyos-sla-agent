@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"net"
 	"github.com/saitama-op/vyos-sla-agent/internal/config"
 	"github.com/saitama-op/vyos-sla-agent/internal/decision"
 	"github.com/saitama-op/vyos-sla-agent/internal/exporter"
@@ -17,7 +16,6 @@ import (
 
 type Worker struct {
 	wan           config.WAN
-	conn          net.PacketConn
 	engine        *decision.Engine
 	vyosCtrl      *vyos.Controller
 	latencyBuf    *util.FloatRingBuffer
@@ -27,8 +25,9 @@ type Worker struct {
 }
 
 // NewWorker initializes a concurrent probe worker for a specific WAN interface
-func NewWorker(wan config.WAN, conn net.PacketConn, engine *decision.Engine, vyosCtrl *vyos.Controller) *Worker {
-	// Initialize 20-sample ring buffers as per architecture spec
+func NewWorker(wan config.WAN, engine *decision.Engine, vyosCtrl *vyos.Controller) *Worker {
+	
+	// Enforce safe defaults if they are missing from config.yaml
 	latencySamples := wan.Threshold.LatencySamples
 	if latencySamples <= 0 {
 		latencySamples = 20
@@ -43,14 +42,14 @@ func NewWorker(wan config.WAN, conn net.PacketConn, engine *decision.Engine, vyo
 	if jitterSamples <= 0 {
 		jitterSamples = 20
 	}
+
 	return &Worker{
 		wan:        wan,
-		conn:       conn,
 		engine:     engine,
 		vyosCtrl:   vyosCtrl,
-		latencyBuf: util.NewFloatRingBuffer(int(latencySamples)), // Defaults to 20 if mapped from config
-		lossBuf:    util.NewFloatRingBuffer(int(lossSamples)),
-		jitterBuf:  util.NewFloatRingBuffer(int(jitterSamples)),
+		latencyBuf: util.NewFloatRingBuffer(latencySamples),
+		lossBuf:    util.NewFloatRingBuffer(lossSamples),
+		jitterBuf:  util.NewFloatRingBuffer(jitterSamples),
 		jitterCalc: metrics.NewRFC3550Jitter(),
 	}
 }
@@ -92,7 +91,8 @@ func (w *Worker) executeProbeCycle(seq int) {
 		wg.Add(1)
 		go func(t string) {
 			defer wg.Done()
-			rtt, err := MeasureRTT(w.conn, t, seq)
+			// We now pass the interface name so MeasureRTT can open its own dedicated socket
+			rtt, err := MeasureRTT(w.wan.Interface, t, seq)
 			results <- probeResult{target: t, rtt: rtt, err: err}
 		}(target)
 	}
@@ -118,6 +118,7 @@ func (w *Worker) executeProbeCycle(seq int) {
 	var cycleLatencyMs float64
 
 	if successfulProbes > 0 {
+		// Divide by time.Millisecond as a float to preserve sub-millisecond fractions
 		cycleLatencyMs = (float64(totalLatency) / float64(time.Millisecond)) / float64(successfulProbes)
 	} else {
 		// If 100% loss, cap latency to threshold + penalty to ensure it penalizes the average
@@ -133,14 +134,13 @@ func (w *Worker) executeProbeCycle(seq int) {
 	w.jitterBuf.Add(cycleJitter)
 
 	// 5. Calculate rolling metrics for decision engine
-	rollingLatency := metrics.Percentile95(w.latencyBuf.Values()) // Using 95th percentile for latency
+	rollingLatency := metrics.Percentile95(w.latencyBuf.Values())
 	rollingLoss := metrics.Average(w.lossBuf.Values())
 	rollingJitter := metrics.Average(w.jitterBuf.Values())
 
 	// 6. Evaluate state machine
 	previousState := w.engine.CurrentState
 	currentState := w.engine.Evaluate(rollingLatency, rollingLoss, rollingJitter, w.wan.Threshold.Latency, w.wan.Threshold.Loss, w.wan.Threshold.Jitter)
-
 
 	// 7. Execute Active SD-WAN Mitigation (VyOS Controller)
 	if w.vyosCtrl != nil {

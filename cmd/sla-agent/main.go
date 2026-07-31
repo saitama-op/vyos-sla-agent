@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"flag" // Add the standard flag package
+	"flag"
 	"log"
 	"log/slog"
 	"net/http"
@@ -58,20 +58,14 @@ func main() {
 
 	// 6. Initialize and Start WAN Workers
 	var wg sync.WaitGroup
-	conns := make([]interface{ Close() error }, 0)
 
 	for _, wan := range cfg.WANs {
 		engine := decision.NewEngine(wan.Name)
 		engines[wan.Name] = engine
 
-		conn, err := probe.CreateInterfaceBoundICMPConn(wan.Interface)
-		if err != nil {
-			slog.Error("Failed to bind socket. Skipping WAN.", "wan", wan.Name, "interface", wan.Interface, "error", err)
-			continue
-		}
-		conns = append(conns, conn)
-
-		worker := probe.NewWorker(wan, conn, engine, vyosCtrl)
+		// Initialize worker without passing a shared connection
+		worker := probe.NewWorker(wan, engine, vyosCtrl)
+		
 		wg.Add(1)
 		go func(w *probe.Worker) {
 			defer wg.Done()
@@ -96,10 +90,6 @@ func main() {
 
 	cancel()
 	wg.Wait()
-
-	for _, conn := range conns {
-		conn.Close()
-	}
 
 	slog.Info("Shutdown complete. Agent exited.")
 }
