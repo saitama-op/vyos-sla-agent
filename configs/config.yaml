@@ -1,27 +1,59 @@
 interval: 5s
+
 wans:
+  # ---------------------------------
+  # WAN 1: ACT
+  # ---------------------------------
   - name: ACT
     interface: eth0
     targets:
       - 1.1.1.1
       - 8.8.8.8
+      - 9.9.9.9
+    on_down: []
+    on_up: []
     threshold:
-      latency: 120        # Max latency in ms
-      latency_samples: 20 # Rolling window size
-      loss: 2             # Max packet loss %
+      latency: 120
+      latency_samples: 20
+      loss: 2
       loss_samples: 20
-      jitter: 15          # Max RFC3550 jitter in ms
+      jitter: 15
       jitter_samples: 20
 
+  # ---------------------------------
+  # WAN 2: Hathway
+  # ---------------------------------
   - name: Hathway
     interface: eth2
     targets:
       - 1.1.1.1
+      - 8.8.8.8
       - 9.9.9.9
+    on_down: []
+    on_up: []
     threshold:
-      latency: 80
+      latency: 120
       latency_samples: 20
-      loss: 1
+      loss: 2
       loss_samples: 20
       jitter: 10
+      jitter_samples: 20
+
+  # ---------------------------------
+  # WAN 3: Airtel
+  # ---------------------------------
+  - name: Airtel
+    interface: eth3
+    targets:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
+    on_down: []
+    on_up: []
+    threshold:
+      latency: 120
+      latency_samples: 20
+      loss: 2
+      loss_samples: 20
+      jitter: 20
       jitter_samples: 20
