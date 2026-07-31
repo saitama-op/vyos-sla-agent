@@ -30,11 +30,11 @@ jobs:
         run: make
 
       - name: Verify binary exists
-        run: ls -la sla-agent
+        run: ls -la bin/sla-agent
 
       - name: Create GitHub Release and Upload Binary
         uses: softprops/action-gh-release@v2
         with:
-          files: sla-agent
+          files: bin/sla-agent
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
