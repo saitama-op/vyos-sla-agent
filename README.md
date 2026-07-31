@@ -112,3 +112,7 @@ The agent automatically wraps these commands in a safe `begin`, `commit`, `end` 
     on_up:
       - "delete protocols static route 0.0.0.0/0 next-hop 10.0.0.1 disable"
 ```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. It is completely free to use, modify, and distribute.
