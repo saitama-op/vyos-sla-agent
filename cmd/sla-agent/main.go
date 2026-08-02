@@ -10,9 +10,10 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	
+
 	"github.com/saitama-op/vyos-sla-agent/internal/config"
 	"github.com/saitama-op/vyos-sla-agent/internal/decision"
 	"github.com/saitama-op/vyos-sla-agent/internal/exporter"
@@ -65,7 +66,7 @@ func main() {
 
 		// Initialize worker without passing a shared connection
 		worker := probe.NewWorker(wan, engine, vyosCtrl)
-		
+
 		wg.Add(1)
 		go func(w *probe.Worker) {
 			defer wg.Done()
@@ -81,7 +82,45 @@ func main() {
 		}
 	}()
 
-	// 8. Handle Graceful Shutdown
+	// 8. Watchdog: Restart if ALL WAN links go DOWN
+	go func() {
+		// Give the agent a 60-second grace period on startup before checking
+		// so it has time to run initial probes and establish state.
+		select {
+		case <-time.After(60 * time.Second):
+		case <-ctx.Done():
+			return // Exit if shutting down during grace period
+		}
+
+		// Check the status every 10 seconds
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return // Clean exit if context is cancelled
+			case <-ticker.C:
+				allDown := true
+
+				// Loop through all configured ISPs
+				for _, engine := range engines {
+					if engine.CurrentState != decision.StateDown {
+						allDown = false
+						break
+					}
+				}
+
+				// If we have engines configured, and EVERY single one is DOWN
+				if len(engines) > 0 && allDown {
+					slog.Error("CRITICAL: All WAN interfaces are DOWN! Forcing process restart to refresh sockets/state...")
+					os.Exit(1) // Systemd will catch this and restart the process
+				}
+			}
+		}
+	}()
+
+	// 9. Handle Graceful Shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
