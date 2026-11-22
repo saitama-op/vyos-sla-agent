@@ -15,7 +15,7 @@ const (
 
 type Engine struct {
 	mu           sync.RWMutex
-	CurrentState State
+	currentState State
 	FailCount    int
 	SuccessCount int
 	MaxFails     int
@@ -25,11 +25,17 @@ type Engine struct {
 
 func NewEngine(wanName string) *Engine {
 	return &Engine{
-		CurrentState: StateUp,
+		currentState: StateUp,
 		MaxFails:     5,
 		MaxSuccesses: 20,
 		WANName:      wanName,
 	}
+}
+
+func (e *Engine) CurrentState() State {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.currentState
 }
 
 // Evaluate now accepts tcpLatency and tcpLoss alongside the ICMP metrics
@@ -39,7 +45,7 @@ func (e *Engine) Evaluate(latency, loss, jitter, tcpLatency, tcpLoss float64, th
 
 	// 1. Check if ICMP metrics breach thresholds
 	icmpFails := latency > thresholdLatency || loss > thresholdLoss || jitter > thresholdJitter
-	
+
 	// 2. Check if TCP metrics breach thresholds (we check tcpLatency > 0 to ensure TCP probing is actually active)
 	tcpFails := (tcpLatency > 0 && tcpLatency > thresholdLatency) || tcpLoss > thresholdLoss
 
@@ -49,30 +55,30 @@ func (e *Engine) Evaluate(latency, loss, jitter, tcpLatency, tcpLoss float64, th
 	if isFailing {
 		e.SuccessCount = 0
 		e.FailCount++
-		
-		if e.CurrentState == StateUp {
-			e.CurrentState = StateDegraded
+
+		if e.currentState == StateUp {
+			e.currentState = StateDegraded
 			// Updated to log both ICMP and TCP metrics for easier debugging
-			slog.Warn("SLA Degraded", 
-				"wan", e.WANName, 
-				"icmp_lat", latency, 
+			slog.Warn("SLA Degraded",
+				"wan", e.WANName,
+				"icmp_lat", latency,
 				"icmp_loss", loss,
 				"tcp_lat", tcpLatency,
 				"tcp_loss", tcpLoss,
 			)
-		} else if e.CurrentState == StateDegraded && e.FailCount >= e.MaxFails {
-			e.CurrentState = StateDown
+		} else if e.currentState == StateDegraded && e.FailCount >= e.MaxFails {
+			e.currentState = StateDown
 			slog.Error("SLA Down", "wan", e.WANName)
 		}
 	} else {
 		e.FailCount = 0
-		if e.CurrentState != StateUp {
+		if e.currentState != StateUp {
 			e.SuccessCount++
 			if e.SuccessCount >= e.MaxSuccesses {
-				e.CurrentState = StateUp
+				e.currentState = StateUp
 				slog.Info("SLA Recovered", "wan", e.WANName)
 			}
 		}
 	}
-	return e.CurrentState
+	return e.currentState
 }

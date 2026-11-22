@@ -46,7 +46,7 @@ func (s *APIServer) Start() error {
 			}
 
 			// Engine is safely bound via closure; no need to look it up or parse URLs
-			state := ispEngine.CurrentState
+			state := ispEngine.CurrentState()
 
 			// Return 200 for UP, 503 for DEGRADED/DOWN
 			if state == decision.StateUp {
@@ -85,7 +85,7 @@ func (s *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Build a map of WAN names to their current state (UP, DEGRADED, DOWN)
 	statusMap := make(map[string]string)
 	for name, engine := range s.engines {
-		statusMap[name] = string(engine.CurrentState)
+		statusMap[name] = string(engine.CurrentState())
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -105,7 +105,7 @@ func main() {
 
 				// Loop through all configured ISPs
 				for _, engine := range engines {
-					if engine.CurrentState != decision.StateDown {
+					if engine.CurrentState() != decision.StateDown {
 						allDown = false
 						break
 					}

@@ -15,16 +15,16 @@ import (
 )
 
 type Worker struct {
-	wan           config.WAN
-	engine        *decision.Engine
-	vyosCtrl      *vyos.Controller
-	
+	wan      config.WAN
+	engine   *decision.Engine
+	vyosCtrl *vyos.Controller
+
 	// ICMP Buffers
-	latencyBuf    *util.FloatRingBuffer
-	lossBuf       *util.FloatRingBuffer
-	jitterBuf     *util.FloatRingBuffer
-	jitterCalc    *metrics.RFC3550Jitter
-	
+	latencyBuf *util.FloatRingBuffer
+	lossBuf    *util.FloatRingBuffer
+	jitterBuf  *util.FloatRingBuffer
+	jitterCalc *metrics.RFC3550Jitter
+
 	// TCP Buffers
 	tcpLatencyBuf *util.FloatRingBuffer
 	tcpLossBuf    *util.FloatRingBuffer
@@ -185,7 +185,7 @@ func (w *Worker) executeProbeCycle(seq int) {
 	w.latencyBuf.Add(cycleLatencyMs)
 	w.lossBuf.Add(cycleLossPercent)
 	w.jitterBuf.Add(cycleJitter)
-	
+
 	if tcpTargetCount > 0 {
 		w.tcpLatencyBuf.Add(tcpCycleLatencyMs)
 		w.tcpLossBuf.Add(tcpCycleLossPercent)
@@ -197,7 +197,7 @@ func (w *Worker) executeProbeCycle(seq int) {
 	rollingLatency := metrics.Percentile95(w.latencyBuf.Values())
 	rollingLoss := metrics.Average(w.lossBuf.Values())
 	rollingJitter := metrics.Average(w.jitterBuf.Values())
-	
+
 	rollingTCPLatency := 0.0
 	rollingTCPLoss := 0.0
 	if tcpTargetCount > 0 {
@@ -208,13 +208,13 @@ func (w *Worker) executeProbeCycle(seq int) {
 	// ==========================================
 	// 7. EVALUATE STATE MACHINE
 	// ==========================================
-	previousState := w.engine.CurrentState
-	
+	previousState := w.engine.CurrentState()
+
 	// NOTE: You will need to update your engine.Evaluate() signature in internal/decision/engine.go
 	// to accept rollingTCPLatency and rollingTCPLoss as shown here.
 	currentState := w.engine.Evaluate(
-		rollingLatency, rollingLoss, rollingJitter, 
-		rollingTCPLatency, rollingTCPLoss, 
+		rollingLatency, rollingLoss, rollingJitter,
+		rollingTCPLatency, rollingTCPLoss,
 		w.wan.Threshold.Latency, w.wan.Threshold.Loss, w.wan.Threshold.Jitter,
 	)
 
