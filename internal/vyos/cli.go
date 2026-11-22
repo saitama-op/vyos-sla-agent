@@ -38,7 +38,8 @@ func (c *Controller) ExecuteTransaction(commands []string) error {
 
 	// 2. Inject the dynamically configured SLA commands from your YAML
 	for _, cmd := range commands {
-		script.WriteString(cmd + "\n")
+		script.WriteString(cmd)
+		script.WriteByte('\n')
 	}
 
 	// 3. Commit and exit cleanly (this releases the session lock)
