@@ -10,8 +10,10 @@ A high-performance, ultra-lightweight SD-WAN SLA monitoring and failover agent f
 - **Dual-Protocol Probing:** Concurrently sends ICMP Echo Requests and TCP SYN handshakes (e.g., port 443) to detect both network-layer routing issues and application-layer drops (like silent upstream NAT/Firewall failures). 
 - **SD-WAN Failover:** Automatically disables/enables routes via the VyOS CLI wrapper when thresholds are crossed.
 - **High Concurrency:** Probes all WAN interfaces and targets simultaneously using goroutines.
-- **Advanced Metrics:** Calculates RFC 3550 standard Jitter and 95th percentile moving averages.
+- **Advanced Metrics:** Calculates RFC 3550 standard jitter and rolling metrics, including 95th-percentile latency.
 - **Hysteresis State Machine:** Prevents route flapping (e.g., requires 5 bad cycles to mark `DOWN`, 20 good cycles to mark `UP`).
+- **Long-Running Probes:** ICMP sequence numbers wrap to their 16-bit wire format, so replies continue to match during extended runs.
+- **Thread-Safe State:** WAN state updates and reads are synchronized for probe workers, API handlers, and the watchdog.
 - **Prometheus Exporter:** Native high-cardinality metrics (`sla_latency_ms`, `sla_loss_percent`, `sla_jitter_ms`, `sla_tcp_latency_ms`, `sla_tcp_loss_percent`, `sla_state`).
 - **REST API:** Built-in HTTP endpoints for external health checks and status queries.
 - **Tiny Footprint:** Minimal CPU usage and < 20MB RAM, compiled as a static binary.
@@ -19,6 +21,8 @@ A high-performance, ultra-lightweight SD-WAN SLA monitoring and failover agent f
 ## Architecture
 
 The agent runs an evaluation cycle every `X` seconds (defined in the config). For each WAN, it concurrently executes ICMP pings and TCP handshakes to all configured targets, calculates rolling metrics over a defined sample size, and evaluates the results against the configured thresholds. 
+
+Each ICMP request uses a 16-bit sequence number, as required by the protocol. The sequence wraps automatically rather than growing beyond the representable range. The WAN state machine protects state access with a read/write mutex so concurrent status checks do not race with probe updates.
 
 **Failover Logic:** The agent uses an `OR` logic gate. If *either* the ICMP probes *or* the TCP probes breach the configured latency or packet loss thresholds, the link is penalized. If a threshold is consistently breached, the agent safely wraps VyOS `begin`, `set...`, `commit`, and `end` commands in a lock-guarded transaction.
 
